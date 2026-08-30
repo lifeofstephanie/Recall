@@ -1,15 +1,16 @@
-require("dotenv").config();
+import dotenv from "dotenv";
+dotenv.config();
 import express from "express";
-const helmet = require("helmet");
-const cors = require("cors");
-const morgan = require("morgan");
-const rateLimit = require("express-rate-limit");
+import helmet from "helmet";
+import cors from "cors";
+import morgan from "morgan";
+import rateLimit from "express-rate-limit";
 
 import authRoutes from "./routes/auth.routes";
 import searchRoutes from "./routes/search.routes";
 import historyRoutes from "./routes/history.routes";
 import watchlistRoutes from "./routes/watchlist.routes";
-const { errorHandler } = require("./middleware/error.middleware");
+import { errorHandler } from "./middleware/error.middleware";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,10 +35,7 @@ app.get("/health", (req, res) => {
   });
 });
 
-console.log("authRoutes", authRoutes);
-console.log("searchRoutes", searchRoutes);
-console.log("historyRoutes", historyRoutes);
-console.log("watchlistRoutes", watchlistRoutes);
+
 
 app.use("/api/auth", authRoutes);
 app.use("/api/search", searchRoutes);
@@ -55,4 +53,4 @@ app.listen(PORT, () => {
   console.log(`Recall running on port ${PORT}`);
 });
 
-module.exports = app;
+export default app;

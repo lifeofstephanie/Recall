@@ -8,7 +8,6 @@ import {
   updateProfile,
   uploadProfilePhoto,
   forgotPassword,
-  changePassword,
 } from "../controllers/auth.controller";
 import { verifyToken, requireAuth } from "../middleware/auth.middleware";
 
@@ -39,6 +38,5 @@ router.post(
   uploadProfilePhoto,
 );
 router.post("/forgot-password", forgotPassword);
-router.patch("/change-password", verifyToken, requireAuth, changePassword);
 
 export default router;

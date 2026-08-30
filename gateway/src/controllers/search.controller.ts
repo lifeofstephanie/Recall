@@ -1,22 +1,8 @@
 import { NextFunction, Request, Response } from "express";
-import { searchMovies } from "../services/ai.service";
+import { searchMovies, MovieAiResult } from "../services/ai.service";
 import { enrichMovies } from "../services/tmdb.service";
 import supabase from "../config/supabase";
-
-// 1. Interfaces for the incoming AI data structure
-interface MovieAiResult {
-  tmdb_id: number;
-  score: number;
-}
-
-// 2. Extend the standard Express request object to recognize req.user
-interface AuthenticatedRequest extends Request {
-  user?: {
-    id: string;
-    email: string;
-    created_at: string;
-  };
-}
+import { AuthenticatedRequest } from "../middleware/auth.middleware";
 
 /**
  * POST /api/search

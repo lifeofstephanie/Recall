@@ -1,7 +1,7 @@
-const express = require("express");
+import express from "express";
 const router = express.Router();
-const searchController = require("../controllers/search.controller");
-const { verifyToken } = require("../middleware/auth.middleware");
+import * as searchController from "../controllers/search.controller";
+import { verifyToken } from "../middleware/auth.middleware";
 
 // POST /api/search
 // Body: { query: string, top_k?: number }

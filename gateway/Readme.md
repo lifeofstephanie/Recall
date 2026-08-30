@@ -1,6 +1,12 @@
-# Gist Gateway — Node.js API
+# Gist Gateway Microservice
 
-The traffic controller for the Gist app. Handles auth (via Supabase), routes search queries to the Python AI microservice, enriches results with TMDb metadata, and persists search history.
+A Node.js/Express API that acts as the entry point for the Gist mobile app. It handles authentication, forwards search requests to the AI service, enriches results with TMDb data, and manages user watchlists and search history.
+
+## Stack
+- Node.js + Express
+- TypeScript
+- Supabase (Auth & Database)
+- TMDb API (Movie Metadata)
 
 ## Quick Start
 
@@ -8,65 +14,49 @@ The traffic controller for the Gist app. Handles auth (via Supabase), routes sea
 # 1. Install dependencies
 npm install
 
-# 2. Set up environment
+# 2. Configure environment variables
 cp .env.example .env
-# Fill in your keys in .env
+# Fill in SUPABASE_URL, SUPABASE_ANON_KEY, TMDB_API_KEY, AI_SERVICE_URL, RESET_PASSWORD_URL
 
-# 3. Run Supabase migration
-# Open Supabase Dashboard > SQL Editor > paste supabase_migration.sql > Run
-
-# 4. Start the server
+# 3. Start development server
 npm run dev
 ```
 
 ## API Endpoints
 
-### Auth
-
-| Method | Path                 | Body                  | Auth         |
-| ------ | -------------------- | --------------------- | ------------ |
-| POST   | `/api/auth/register` | `{ email, password }` | None         |
-| POST   | `/api/auth/login`    | `{ email, password }` | None         |
-| POST   | `/api/auth/logout`   | —                     | Bearer token |
-| GET    | `/api/auth/me`       | —                     | Bearer token |
+### Authentication
+- `POST /api/auth/register` — Create account (name, email, password)
+- `POST /api/auth/login` — Login (email, password)
+- `POST /api/auth/logout` — Logout user (Requires Bearer token)
+- `GET /api/auth/me` — Get profile info
+- `PATCH /api/auth/profile` — Update name or password
+- `POST /api/auth/profile/photo` — Upload avatar image
+- `POST /api/auth/forgot-password` — Request password reset email
 
 ### Search
-
-| Method | Path          | Body                | Auth     |
-| ------ | ------------- | ------------------- | -------- |
-| POST   | `/api/search` | `{ query, top_k? }` | Optional |
+- `POST /api/search` — Semantic movie search (query, top_k)
+  - Supports Guest mode (no token needed)
+  - Enriches AI results with TMDb posters, cast, runtime, genres, trailers.
+  - Automatically saves to history if token is provided.
 
 ### History
+- `GET /api/history` — Get user's search history (paginated)
+- `DELETE /api/history/:id` — Delete a specific history entry
+- `DELETE /api/history` — Clear all history
 
-| Method | Path               | Auth     |
-| ------ | ------------------ | -------- |
-| GET    | `/api/history`     | Required |
-| DELETE | `/api/history/:id` | Required |
-| DELETE | `/api/history`     | Required |
+### Watchlist
+- `GET /api/watchlist` — Get user's saved movies
+- `POST /api/watchlist` — Add movie to watchlist (body: `{ tmdb_id }`)
+- `DELETE /api/watchlist/:tmdbId` — Remove movie from watchlist
+- `GET /api/watchlist/:tmdbId/check` — Check if a movie is in watchlist
 
 ## Environment Variables
-
-See `.env.example` for all required variables.
-
-## Project Structure
-
-```
-src/
-├── index.js              # Express app entry point
-├── config/
-│   └── supabase.js       # Supabase service role client
-├── middleware/
-│   ├── auth.middleware.js # JWT verification + requireAuth guard
-│   └── error.middleware.js
-├── routes/
-│   ├── auth.routes.js
-│   ├── search.routes.js
-│   └── history.routes.js
-├── controllers/
-│   ├── auth.controller.js
-│   ├── search.controller.js
-│   └── history.controller.js
-└── services/
-    ├── ai.service.js     # Python AI microservice client
-    └── tmdb.service.js   # TMDb API client
-```
+- `PORT` - Server port (default 3000)
+- `NODE_ENV` - `development` or `production`
+- `SUPABASE_URL` - Supabase project URL
+- `SUPABASE_ANON_KEY` - Supabase anon/public key
+- `TMDB_API_KEY` - The Movie Database API key
+- `AI_SERVICE_URL` - URL of the Python AI service (e.g. `http://localhost:7860`)
+- `RATE_LIMIT_WINDOW_MS` - Rate limiting window
+- `RATE_LIMIT_MAX_REQUESTS` - Rate limiting max requests per window
+- `RESET_PASSWORD_URL` - Client URL to handle password reset

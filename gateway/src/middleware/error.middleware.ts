@@ -27,11 +27,4 @@ export function errorHandler(
   });
 }
 
-/**
- * Utility helper to quickly generate styled errors with status codes attached.
- */
-export function createError(statusCode: number, message: string): CustomError {
-  const err: CustomError = new Error(message);
-  err.statusCode = statusCode;
-  return err;
-}
+

@@ -30,15 +30,4 @@ export async function searchMovies(
   return response.data.results; // [{ tmdb_id, score }, ...]
 }
 
-/**
- * Health check — verify the AI microservice is reachable.
- */
-export async function pingAIService(): Promise<any> {
-  const response: AxiosResponse<any> = await axios.get(
-    `${AI_SERVICE_URL}/health`,
-    {
-      timeout: 5000,
-    },
-  );
-  return response.data;
-}
+

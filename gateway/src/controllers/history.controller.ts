@@ -1,13 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 import supabase from "../config/supabase";
-
-interface AuthenticatedRequest extends Request {
-  user?: {
-    id: string;
-    email: string;
-    created_at: string;
-  };
-}
+import { AuthenticatedRequest } from "../middleware/auth.middleware";
 
 export async function getHistory(
   req: AuthenticatedRequest,

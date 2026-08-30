@@ -1,270 +1,214 @@
 """
-GIST - TMDb & SubDL Ingestion Script (LanceDB Cloud + MiniLM) - Optimized
+GIST - Kaggle & TMDb Ingestion Script (LanceDB Cloud + MiniLM)
 ===========================================================
-Fetches classic blockbuster English movies, checks for duplicates,
-extracts subtitles in-memory, embeds quotes, and uploads to LanceDB Cloud.
+Fetches bulk movie transcripts from Kaggle (fayaznoor10/movie-transcripts-59k),
+matches them with TMDb IDs via search, embeds chunks of dialogue using MiniLM,
+and uploads to LanceDB Cloud.
 """
-
 import os
 import time
 import httpx
 import lancedb
-import zipfile
-import io
-import re
 import pyarrow as pa
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
+
+try:
+    import kaggle
+except (OSError, ImportError):
+    print("⚠️ Kaggle API credentials or package not found.")
+    print("Please run: pip install kaggle pandas")
+    print("And ensure your kaggle.json is placed in ~/.kaggle/ (Mac/Linux) or C:\\Users\\<User>\\.kaggle\\ (Windows).")
+    # We can still proceed if the data is already downloaded
 
 load_dotenv()
 
 # ── Config ────────────────────────────────────────────────
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-SUBDL_API_KEY = os.getenv("SUBDL_API_KEY")
-
-# Cloud Database credentials
 DB_URI = os.getenv("LANCE_DB_URI")
 LANCE_API_KEY = os.getenv("LANCE_API_KEY")
 TABLE_NAME = os.getenv("LANCE_TABLE_NAME", "movie_quotes")
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
-SUBDL_BASE_URL = "https://api.subdl.com/api/v1/subtitles"
-
-MAX_PAGES = 5  # 5 pages * 20 movies = 100 movies for testing
 DENSE_VECTOR_SIZE = 384
-
+TRACKER_FILE = "ingested_files.txt"
 
 # ── Cloud Database Setup ──────────────────────────────────
 def setup_database():
     if not DB_URI or not DB_URI.startswith("db://"):
-        raise ValueError(
-            "❌ ERROR: LANCE_DB_URI must be a valid cloud URI starting with 'db://'"
-        )
+        raise ValueError("❌ ERROR: LANCE_DB_URI must start with 'db://'")
     if not LANCE_API_KEY:
-        raise ValueError(
-            "❌ ERROR: LANCE_API_KEY is missing from your environment variables."
-        )
+        raise ValueError("❌ ERROR: LANCE_API_KEY is missing.")
 
     print(f"\n☁️ Connecting to LanceDB Cloud at {DB_URI}...")
-
-    # Establish a connection to the serverless remote database
     db = lancedb.connect(DB_URI, api_key=LANCE_API_KEY)
 
-    # Define the exact schema for the table
+    # Schema is updated to remove start/end time since Kaggle transcripts don't have them
     schema = pa.schema(
         [
             pa.field("vector", pa.list_(pa.float32(), DENSE_VECTOR_SIZE)),
             pa.field("tmdb_id", pa.int32()),
             pa.field("title", pa.string()),
             pa.field("quote_text", pa.string()),
-            pa.field("start_time", pa.string()),
-            pa.field("end_time", pa.string()),
         ]
     )
 
     try:
-        # Open table if it exists, or create it using the specified schema
         table = db.create_table(TABLE_NAME, schema=schema, exist_ok=True)
         print(f"✅ Cloud Table '{TABLE_NAME}' is ready.")
     except Exception as e:
         print(f"❌ Failed to initialize cloud table: {repr(e)}")
         raise e
-
     return table
 
+# ── TMDb Matcher ──────────────────────────────────────────
+def get_tmdb_id(title: str, year: str = None):
+    url = f"{TMDB_BASE_URL}/search/movie"
+    params = {
+        "api_key": TMDB_API_KEY,
+        "query": title,
+    }
+    if year:
+        params["primary_release_year"] = year
 
-# ── Duplicate Check ───────────────────────────────────────
-def movie_exists(table, tmdb_id):
-    """Checks if the database already contains quotes for this movie."""
     try:
-        # Ask LanceDB for just 1 row matching this exact TMDB ID
-        results = table.search().where(f"tmdb_id = {tmdb_id}").limit(1).to_list()
-        return len(results) > 0
-    except Exception:
-        # If the table is completely empty, LanceDB might throw an error on search
-        return False
-
-
-# ── TMDb Fetch (Optimized for Classic Blockbusters) ───────
-def fetch_movies(page: int):
-    print(f"\n📡 Fetching TMDb page {page}...")
-    try:
-        response = httpx.get(
-            f"{TMDB_BASE_URL}/discover/movie",
-            params={
-                "api_key": TMDB_API_KEY,
-                "page": page,
-                "with_original_language": "en",  # Filters out non-English origin films
-                "sort_by": "vote_count.desc",  # OPTIMIZED: Grabs the most voted/famous movies ever
-            },
-            timeout=20.0,
-        )
-        response.raise_for_status()
-        results = response.json().get("results", [])
-        return results
+        resp = httpx.get(url, params=params, timeout=10.0)
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+        if results:
+            return results[0]["id"], results[0]["title"]
     except Exception as e:
-        print("❌ TMDb error:", repr(e))
-        return []
+        print(f"   ⚠️ TMDb search failed for {title}: {e}")
+    
+    return None, None
 
+# ── Bulk Dataset Downloader ───────────────────────────────
+def download_dataset():
+    dataset_name = "fayaznoor10/movie-transcripts-59k"
+    download_path = "./modern_movies_raw"
+    
+    if not os.path.exists(download_path):
+        print(f"Downloading {dataset_name} from Kaggle...")
+        try:
+            import kaggle
+            kaggle.api.dataset_download_files(dataset_name, path=download_path, unzip=True)
+            print("✅ Dataset downloaded.")
+        except Exception as e:
+            print(f"❌ Kaggle download failed. Make sure you set up Kaggle API: {e}")
+            exit(1)
+    else:
+        print(f"📁 Dataset already exists at {download_path}.")
+        
+    return download_path
 
-# ── SubDL Fetch & Parse (Robust Matching) ──────────────────
-def fetch_and_parse_subtitles(tmdb_id):
-    """Hits SubDL, downloads the ZIP, extracts the SRT, and parses quotes."""
-    try:
-        # 1. Ask SubDL for subtitle links for this specific movie
-        response = httpx.get(
-            SUBDL_BASE_URL,
-            params={"api_key": SUBDL_API_KEY, "tmdb_id": tmdb_id},
-            timeout=20.0,
-        )
-        response.raise_for_status()
-        data = response.json()
+def chunk_dialogue(lines, chunk_size=3):
+    """Combines every few lines of dialogue into a single searchable chunk"""
+    chunks = []
+    for i in range(0, len(lines), chunk_size):
+        chunk_text = " ".join(lines[i:i + chunk_size])
+        if len(chunk_text.strip()) > 10:
+            chunks.append(chunk_text.strip())
+    return chunks
 
-        if not data.get("subtitles"):
-            return []
-
-        # 2. Find the first English subtitle track (Case-Insensitive Match)
-        english_subs = []
-        for s in data["subtitles"]:
-            lang = s.get("language", "").lower()
-            if "english" in lang or lang == "en":
-                english_subs.append(s)
-
-        if not english_subs:
-            return []
-
-        target_sub = english_subs[0]
-        download_url = target_sub.get("url")
-        if download_url.startswith("/"):
-            download_url = "https://dl.subdl.com" + download_url
-
-        # 3. Download the ZIP file into memory
-        zip_response = httpx.get(download_url, timeout=30.0)
-        zip_response.raise_for_status()
-
-        # 4. Extract the SRT file from the in-memory ZIP
-        with zipfile.ZipFile(io.BytesIO(zip_response.content)) as z:
-            srt_filename = next(
-                (name for name in z.namelist() if name.endswith(".srt")), None
-            )
-            if not srt_filename:
-                return []
-
-            srt_bytes = z.read(srt_filename)
-            try:
-                srt_text = srt_bytes.decode("utf-8")
-            except UnicodeDecodeError:
-                srt_text = srt_bytes.decode("latin-1")  # Fallback for older encodings
-
-        # 5. Parse raw SRT text into clean semantic chunks
-        parsed_quotes = []
-        pattern = re.compile(
-            r"(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.*?)(?=\n\n|\Z)",
-            re.DOTALL,
-        )
-        matches = pattern.findall(srt_text.replace("\r", ""))
-
-        for start, end, raw_text in matches:
-            clean_text = re.sub(r"<[^>]+>", "", raw_text).replace("\n", " ").strip()
-            if clean_text:
-                parsed_quotes.append({"start": start, "end": end, "text": clean_text})
-
-        return parsed_quotes
-
-    except Exception as e:
-        print(f"   ⚠️ Subtitle fetch failed for {tmdb_id}: {repr(e)}")
-        return []
-
-
-# ── Embedding + Cloud Upload ──────────────────────────────
-def embed_and_upload_movie(table, model, movie, quotes):
-    if not quotes:
-        return 0
-
-    print(f"   ⚡ Embedding {len(quotes)} quotes for: {movie.get('title')}")
-
-    texts = [q["text"] for q in quotes]
-
-    try:
-        # Generate the 384-dimension vectors locally
-        embeddings = model.encode(texts)
-    except Exception as e:
-        print("   ❌ Embedding failed:", repr(e))
-        return 0
-
-    # Format the rows to match the LanceDB schema
-    data_to_insert = []
-    for i, quote in enumerate(quotes):
-        data_to_insert.append(
-            {
-                "vector": embeddings[i].tolist(),
-                "tmdb_id": movie["id"],
-                "title": movie.get("title", ""),
-                "quote_text": quote["text"],
-                "start_time": quote["start"],
-                "end_time": quote["end"],
-            }
-        )
-
-    try:
-        # Stream the formatted rows straight over the web to your cloud database instance
-        table.add(data_to_insert)
-        return len(quotes)
-    except Exception as e:
-        print("   ❌ LanceDB Cloud write failed:", repr(e))
-        return 0
-
-
-# ── Main pipeline ─────────────────────────────────────────
+# ── Ingestion Engine ──────────────────────────────────────
 def ingest():
-    print("\n🎬 STARTING LANCE_DB CLOUD INGESTION PIPELINE\n")
+    print("\n🎬 STARTING BULK INGESTION PIPELINE (Kaggle -> LanceDB Cloud)\n")
 
     model = SentenceTransformer(EMBEDDING_MODEL)
     print("✅ MiniLM Model loaded successfully")
 
-    # Connect to remote cloud instance
     table = setup_database()
+    download_path = download_dataset()
 
-    total_movies = 0
-    total_quotes = 0
+    processed_movies = 0
+    total_chunks = 0
 
-    for page in range(1, MAX_PAGES + 1):
-        movies = fetch_movies(page)
+    print("\nProcessing transcripts...")
+    
+    # Load tracker to know where we stopped
+    if os.path.exists(TRACKER_FILE):
+        with open(TRACKER_FILE, "r") as f:
+            ingested = set(f.read().splitlines())
+        print(f"📌 Found tracker file: {len(ingested)} movies already processed. Resuming...")
+    else:
+        ingested = set()
 
-        if not movies:
-            continue
-
-        for movie in movies:
-            print(f"\n➕ Processing: {movie.get('title')} ({movie['id']})")
-
-            # 🛑 NEW: Check if the database already has this movie before doing anything
-            if movie_exists(table, movie["id"]):
-                print("   ⏭️ Skipped (Already saved in Cloud Database)")
+    for filename in os.listdir(download_path):
+        if filename.endswith(".txt"):
+            if filename in ingested:
+                continue  # Skip locally tracked files instantly
+                
+            # Extract title and year from filename (e.g., "The_Dark_Knight_2008.txt")
+            name_part = filename.replace(".txt", "")
+            parts = name_part.split("_")
+            year = parts[-1] if parts[-1].isdigit() and len(parts[-1]) == 4 else None
+            
+            if year:
+                raw_title = " ".join(parts[:-1])
+            else:
+                raw_title = " ".join(parts)
+                
+            print(f"\n➕ Processing: {raw_title} ({year or 'Unknown'})")
+            
+            tmdb_id, official_title = get_tmdb_id(raw_title, year)
+            if not tmdb_id:
+                print("   Skip: Could not match to TMDb.")
                 continue
 
-            # Fetch and parse the subtitles for this movie
-            quotes = fetch_and_parse_subtitles(movie["id"])
+            # Basic duplicate check
+            try:
+                if len(table.to_lance().to_arrow(filter=f"tmdb_id = {tmdb_id}", limit=1)) > 0:
+                    print("   Skip: Already saved in Cloud Database.")
+                    continue
+            except Exception:
+                pass # Table might be empty on first run
 
-            if quotes:
-                # Embed the quotes and write them to the cloud table
-                quotes_inserted = embed_and_upload_movie(table, model, movie, quotes)
-                total_quotes += quotes_inserted
-                total_movies += 1
-            else:
-                print("   ⏭️ Skipped (No English subtitles found)")
+            file_path = os.path.join(download_path, filename)
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    lines = [line.strip() for line in f.readlines() if len(line.strip()) > 10]
+            except Exception as e:
+                print(f"   ⚠️ Could not read {filename}: {e}")
+                continue
 
-            # Throttling rate limit safety buffer
-            time.sleep(1.5)
+            chunks = chunk_dialogue(lines, chunk_size=3)
+            if not chunks:
+                print("   Skip: No valid dialogue extracted.")
+                continue
 
-        print(
-            f"\n📊 Progress: {total_movies} movies and {total_quotes} quotes successfully pushed to the Cloud."
-        )
+            print(f"   ⚡ Embedding {len(chunks)} dialogue chunks for: {official_title}")
+            try:
+                embeddings = model.encode(chunks)
+            except Exception as e:
+                print(f"   ❌ Embedding failed: {e}")
+                continue
 
-    print(
-        f"\n🎉 DONE — Total Movies Uploaded: {total_movies} | Total Quotes Stored: {total_quotes}\n"
-    )
+            data_to_insert = []
+            for i, chunk_text in enumerate(chunks):
+                data_to_insert.append({
+                    "vector": embeddings[i].tolist(),
+                    "tmdb_id": int(tmdb_id),
+                    "title": official_title,
+                    "quote_text": chunk_text
+                })
 
+            try:
+                table.add(data_to_insert)
+                total_chunks += len(chunks)
+                processed_movies += 1
+                
+                # Mark as completed in tracker
+                with open(TRACKER_FILE, "a") as f:
+                    f.write(filename + "\n")
+                    
+                print(f"   ✅ Saved {len(chunks)} chunks.")
+            except Exception as e:
+                print(f"   ❌ LanceDB Cloud write failed: {e}")
+
+            time.sleep(0.5) # Rate limit for TMDB API
+
+    print(f"\n🎉 DONE — Total Movies: {processed_movies} | Total Quotes: {total_chunks}\n")
 
 if __name__ == "__main__":
     ingest()

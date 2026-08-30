@@ -1,16 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import supabase from "../config/supabase";
 import { getMovieDetails } from "../services/tmdb.service";
-
-// ── Types ───────────────────────────────────────────────────────────────────
-
-interface AuthenticatedRequest extends Request {
-  user?: {
-    id: string;
-    email: string;
-    created_at: string;
-  };
-}
+import { AuthenticatedRequest } from "../middleware/auth.middleware";
 
 interface WatchlistEntry {
   tmdb_id: number;

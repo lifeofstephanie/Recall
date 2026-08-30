@@ -8,28 +8,25 @@ router = APIRouter()
 async def search(request: Request, body: SearchRequest):
     """
     POST /search
-    Accepts a text query, vectorizes it with BGE-M3, and runs
-    hybrid search against the Qdrant movie collection.
+    Accepts a text query, vectorizes it with MiniLM, and runs
+    vector search against the LanceDB movie quotes collection.
+
+    Results are deduplicated by tmdb_id so each movie appears once.
     """
     embedder = request.app.state.embedder
-    qdrant = request.app.state.qdrant
+    lancedb = request.app.state.lancedb
 
     try:
-        # Step 1: Vectorize the query (dense + sparse in one pass)
-        vectors = embedder.embed(body.query)
+        # Step 1: Embed the query text into a 384-dim vector
+        query_vector = embedder.embed(body.query)
 
-        dense_results = qdrant.client.query_points(
-            collection_name="movies",
-            using="dense",
-            query=vectors["dense"],
-            limit=body.top_k,
-            with_payload=True,
-        )
+        # Step 2: Search LanceDB (handles dedup internally)
+        raw_results = lancedb.search(query_vector, top_k=body.top_k)
 
-
+        # Step 3: Format response
         results = [
-            MovieResult(tmdb_id=r.payload["tmdb_id"], score=r.score)
-            for r in dense_results.points
+            MovieResult(tmdb_id=r["tmdb_id"], score=r["score"])
+            for r in raw_results
         ]
 
         return SearchResponse(query=body.query, results=results)

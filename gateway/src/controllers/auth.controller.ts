@@ -2,11 +2,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { Request, Response, NextFunction } from "express";
 import supabase from "../config/supabase";
 
-interface AuthenticatedRequest extends Request {
-  token?: string;
-  user?: any;
-  file?: Express.Multer.File;
-}
+import { AuthenticatedRequest } from "../middleware/auth.middleware";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
@@ -270,49 +266,7 @@ export async function uploadProfilePhoto(
   }
 }
 
-export async function changePassword(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction,
-) {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
 
-    const { password } = req.body;
-
-    if (!password) {
-      return res.status(400).json({ error: "New password is required" });
-    }
-
-    const supabaseClient = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
-      {
-        global: {
-          headers: {
-            Authorization: `Bearer ${req.token || ""}`,
-          },
-        },
-      },
-    );
-
-    const { error } = await supabaseClient.auth.updateUser({
-      password,
-    });
-
-    if (error) {
-      return res.status(400).json({ error: error.message });
-    }
-
-    return res.json({
-      message: "Password updated successfully",
-    });
-  } catch (err) {
-    next(err);
-  }
-}
 
 export async function forgotPassword(
   req: Request,
@@ -327,7 +281,7 @@ export async function forgotPassword(
     }
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: "https://your-app.com/reset-password",
+      redirectTo: process.env.RESET_PASSWORD_URL || "https://your-app.com/reset-password",
     });
 
     if (error) {

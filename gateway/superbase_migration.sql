@@ -3,6 +3,20 @@
 -- Run this in the Supabase SQL Editor (Dashboard > SQL Editor)
 -- ================================================================
 
+-- ── profiles ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id          UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  name        TEXT,
+  avatar_url  TEXT,
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can read own profile"
+  ON public.profiles FOR SELECT
+  USING (auth.uid() = id);
+
 -- ── search_history ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.search_history (
   id                    UUID DEFAULT gen_random_uuid() PRIMARY KEY,
