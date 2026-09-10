@@ -1,0 +1,22 @@
+# Python virtualenv — never ship this (huge, machine-specific)
+venv/
+.venv/
+
+# Caches / bytecode
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Secrets — set these as Space secrets, never bake into the image
+.env
+
+# One-time ingestion artifacts (data already lives in LanceDB Cloud)
+modern_movies_raw/
+ingested_files.txt
+
+# VCS / editor
+.git/
+.gitignore
+.vscode/
+.DS_Store

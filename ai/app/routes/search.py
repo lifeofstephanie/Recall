@@ -31,5 +31,11 @@ async def search(request: Request, body: SearchRequest):
 
         return SearchResponse(query=body.query, results=results)
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+    except Exception:
+        # Log the full traceback server-side, but return a generic message
+        # so internal details (stack traces, DB URIs, etc.) never reach clients.
+        import traceback
+
+        print("❌ /search failed:")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Search failed. Please try again.")

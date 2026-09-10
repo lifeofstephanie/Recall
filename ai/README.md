@@ -1,4 +1,19 @@
+---
+title: Gist AI Microservice
+emoji: 🎬
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Gist AI Microservice — Python FastAPI
+
+> **Deployment:** This folder is deployed as a **Hugging Face Docker Space**. The YAML block above
+> is the Space config HF requires. Set `LANCE_DB_URI`, `LANCE_API_KEY`, and `LANCE_TABLE_NAME` as
+> **Space secrets** (Settings → Variables and secrets). `TMDB_API_KEY` is only needed locally for
+> `ingest.py`, not by the running service. See `../DEPLOYMENT.md` for the full walkthrough.
 
 The AI brain of the Gist app. Converts text queries into MiniLM vectors
 and runs semantic search against the LanceDB Cloud movie quotes database.
@@ -60,7 +75,7 @@ uvicorn main:app --reload --port 8000
 ```
 gist-ai/
 ├── main.py                  # FastAPI app + startup lifespan
-├── ingest.py                # One-time TMDb + SubDL → LanceDB ingestion script
+├── ingest.py                # One-time Kaggle transcripts + TMDb → LanceDB ingestion script
 ├── Dockerfile               # Hugging Face Spaces deployment
 ├── requirements.txt
 ├── app/

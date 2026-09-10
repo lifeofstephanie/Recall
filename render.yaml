@@ -1,0 +1,38 @@
+# Render Blueprint for the Gist Gateway (Node/Express).
+# Render deploys from the backend repo (lifeofstephanie/Recall); the gateway
+# lives in the ./gateway subdirectory. Secrets (sync: false) must be filled in
+# from the Render dashboard — they are never stored in git.
+services:
+  - type: web
+    name: gist-gateway
+    runtime: node
+    plan: free
+    rootDir: gateway
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TMDB_BASE_URL
+        value: https://api.themoviedb.org/3
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "900000"
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "100"
+      # ── Secrets — set these in the Render dashboard ──
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TMDB_API_KEY
+        sync: false
+      # The public URL of the Hugging Face AI Space, e.g.
+      # https://lifeofstephanie-gist-ai.hf.space  (no trailing slash)
+      - key: AI_SERVICE_URL
+        sync: false
+      - key: RESET_PASSWORD_URL
+        sync: false
