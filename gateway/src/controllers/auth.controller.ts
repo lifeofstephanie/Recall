@@ -430,10 +430,17 @@ export async function updatePreferences(
     if (typeof autoplay_trailers === "boolean")
       updated.autoplay_trailers = autoplay_trailers;
 
+    // upsert so it works even if the profile row doesn't exist yet
     const { error } = await supabase
       .from("profiles")
-      .update({ preferences: updated, updated_at: new Date().toISOString() })
-      .eq("id", req.user.id);
+      .upsert(
+        {
+          id: req.user.id,
+          preferences: updated,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id" },
+      );
 
     if (error) return res.status(400).json({ error: error.message });
 
