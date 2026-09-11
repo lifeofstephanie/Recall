@@ -66,3 +66,35 @@ CREATE POLICY "Users can delete own watchlist entries"
   USING (auth.uid() = user_id);
 
 -- Backend uses service_role key for INSERT (bypasses RLS safely)
+
+-- ── user preferences (notifications, autoplay, etc.) ──────────────
+-- Stored as JSON on the profile. Run this if upgrading an existing DB.
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS preferences JSONB DEFAULT '{}'::jsonb;
+
+-- ── push_tokens (Expo push notification device tokens) ────────────
+CREATE TABLE IF NOT EXISTS public.push_tokens (
+  id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id     UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  token       TEXT NOT NULL UNIQUE,
+  platform    TEXT,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_push_tokens_user_id
+  ON public.push_tokens(user_id);
+ALTER TABLE public.push_tokens ENABLE ROW LEVEL SECURITY;
+-- Backend uses the service_role key (bypasses RLS).
+
+-- ── search_misses (deferred "we found your movie" notifications) ──
+-- A row is written when a signed-in user's search returns nothing. After the
+-- full library is ingested, an admin re-check finds new matches and notifies.
+CREATE TABLE IF NOT EXISTS public.search_misses (
+  id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id     UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  query       TEXT NOT NULL,
+  notified    BOOLEAN DEFAULT FALSE,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_search_misses_notified
+  ON public.search_misses(notified);
+ALTER TABLE public.search_misses ENABLE ROW LEVEL SECURITY;

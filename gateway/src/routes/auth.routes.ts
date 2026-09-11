@@ -8,6 +8,10 @@ import {
   updateProfile,
   uploadProfilePhoto,
   forgotPassword,
+  refreshToken,
+  deleteAccount,
+  getPreferences,
+  updatePreferences,
 } from "../controllers/auth.controller";
 import { verifyToken, requireAuth } from "../middleware/auth.middleware";
 
@@ -38,5 +42,11 @@ router.post(
   uploadProfilePhoto,
 );
 router.post("/forgot-password", forgotPassword);
+router.post("/refresh", refreshToken);
+
+// Account management
+router.delete("/account", verifyToken, requireAuth, deleteAccount);
+router.get("/preferences", verifyToken, requireAuth, getPreferences);
+router.patch("/preferences", verifyToken, requireAuth, updatePreferences);
 
 export default router;

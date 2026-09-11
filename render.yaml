@@ -63,3 +63,6 @@ services:
         sync: false
       - key: RESET_PASSWORD_URL
         sync: false
+      # Guards the admin notification routes (broadcast / recheck-misses)
+      - key: ADMIN_SECRET
+        sync: false

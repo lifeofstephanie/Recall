@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { Request, Response, NextFunction } from "express";
 import supabase from "../config/supabase";
+import { notifyUser } from "../services/push.service";
 
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
 
@@ -197,6 +198,12 @@ export async function updateProfile(
       });
       const { error } = await supabaseClient.auth.updateUser({ password });
       if (error) return res.status(400).json({ error: error.message });
+
+      // Account notification (best-effort).
+      notifyUser(req.user.id, {
+        title: "Password changed",
+        body: "Your Recall password was just changed.",
+      }).catch(() => {});
     }
 
     // Update name in profiles table if provided
@@ -290,6 +297,149 @@ export async function forgotPassword(
 
     return res.json({
       message: "Password reset email sent successfully",
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/auth/refresh
+ * Body: { refresh_token }
+ * Exchanges a refresh token for a fresh session so users stay logged in
+ * across app restarts and past the access-token expiry.
+ */
+export async function refreshToken(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<any> {
+  try {
+    const { refresh_token } = req.body;
+    if (!refresh_token) {
+      return res.status(400).json({ error: "refresh_token is required" });
+    }
+
+    const supabaseClient = getAnonClient();
+    const { data, error } = await supabaseClient.auth.refreshSession({
+      refresh_token,
+    });
+
+    if (error || !data.session || !data.user) {
+      return res
+        .status(401)
+        .json({ error: error?.message || "Could not refresh session" });
+    }
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("name, avatar_url")
+      .eq("id", data.user.id)
+      .single();
+
+    return res.json({
+      user: {
+        id: data.user.id,
+        email: data.user.email,
+        name: profile?.name || null,
+        avatar_url: profile?.avatar_url || null,
+      },
+      session: {
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+        expires_at: data.session.expires_at,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * DELETE /api/auth/account
+ * Permanently deletes the signed-in user. Their profile / history / watchlist
+ * rows are removed automatically via ON DELETE CASCADE.
+ */
+export async function deleteAccount(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<any> {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+
+    const { error } = await supabase.auth.admin.deleteUser(req.user.id);
+    if (error) return res.status(400).json({ error: error.message });
+
+    return res.json({ message: "Account deleted" });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/auth/preferences
+ * Returns the user's stored preferences (with sensible defaults).
+ */
+export async function getPreferences(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<any> {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+
+    const { data } = await supabase
+      .from("profiles")
+      .select("preferences")
+      .eq("id", req.user.id)
+      .single();
+
+    const prefs = data?.preferences || {};
+    return res.json({
+      notifications: prefs.notifications ?? true,
+      autoplay_trailers: prefs.autoplay_trailers ?? false,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * PATCH /api/auth/preferences
+ * Body: { notifications?, autoplay_trailers? } — merged into the stored JSON.
+ */
+export async function updatePreferences(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<any> {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+
+    const { notifications, autoplay_trailers } = req.body;
+
+    const { data } = await supabase
+      .from("profiles")
+      .select("preferences")
+      .eq("id", req.user.id)
+      .single();
+
+    const updated = { ...(data?.preferences || {}) };
+    if (typeof notifications === "boolean") updated.notifications = notifications;
+    if (typeof autoplay_trailers === "boolean")
+      updated.autoplay_trailers = autoplay_trailers;
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ preferences: updated, updated_at: new Date().toISOString() })
+      .eq("id", req.user.id);
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    return res.json({
+      notifications: updated.notifications ?? true,
+      autoplay_trailers: updated.autoplay_trailers ?? false,
     });
   } catch (err) {
     next(err);

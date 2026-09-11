@@ -45,6 +45,20 @@ export async function search(
     }
 
     if (!aiResults || aiResults.length === 0) {
+      // Record a "miss" so we can notify this user later (once the library
+      // grows) if a match becomes available. Fire-and-forget.
+      if (req.user) {
+        const uid = req.user.id;
+        void (async () => {
+          try {
+            await supabase
+              .from("search_misses")
+              .insert({ user_id: uid, query: trimmedQuery });
+          } catch {
+            /* fire-and-forget */
+          }
+        })();
+      }
       return res.json({ query: trimmedQuery, results: [] });
     }
 
