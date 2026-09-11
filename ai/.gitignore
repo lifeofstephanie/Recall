@@ -2,3 +2,8 @@ venv/
 .env
 __pycache__/
 *.pyc
+
+# Ingestion artifacts (regenerable / local-only)
+modern_movies_raw/
+sample_movies/
+ingested_files.txt
