@@ -10,6 +10,7 @@ import authRoutes from "./routes/auth.routes";
 import searchRoutes from "./routes/search.routes";
 import historyRoutes from "./routes/history.routes";
 import watchlistRoutes from "./routes/watchlist.routes";
+import movieRoutes from "./routes/movie.routes";
 import { errorHandler } from "./middleware/error.middleware";
 
 const app = express();
@@ -40,8 +41,8 @@ app.get("/health", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/history", historyRoutes);
-
 app.use("/api/watchlist", watchlistRoutes);
+app.use("/api/movie", movieRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ error: `Route ${req.method} ${req.path} not found` });
