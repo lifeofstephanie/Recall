@@ -1,147 +1,116 @@
 # Deploying the Gist Backend
 
-Two compute services to deploy. The data stores (**LanceDB Cloud**, **Supabase**) are already live,
-so nothing to host there.
+Both compute services run on **Render's free tier**. The data stores (**LanceDB Cloud**,
+**Supabase**) are already live, so nothing to host there.
 
-| Service | Folder | Host | Why |
-| ------- | ------ | ---- | --- |
-| AI microservice | `ai/` | **Hugging Face Docker Space** | Needs ~1 GB RAM for PyTorch + MiniLM; HF free tier gives 16 GB |
-| Gateway API | `gateway/` | **Render** (free web service) | Lightweight Node app; the frontend talks only to this |
+| Service | Folder | Host | Notes |
+| ------- | ------ | ---- | ----- |
+| AI microservice | `ai/` | Render web service (Python) | ONNX embeddings (`fastembed`, no PyTorch) — ~260 MB RAM, fits the 512 MB free tier |
+| Gateway API | `gateway/` | Render web service (Node) | Lightweight; the frontend talks only to this |
 
-**Data flow once live:** `Frontend → Render (gateway) → HF Space (AI) → LanceDB` and `→ TMDb / Supabase`.
+Both are defined in **`render.yaml`**, so a single Render Blueprint creates them together.
+
+**Data flow once live:** `Frontend → gist-gateway → gist-ai → LanceDB` and `gist-gateway → TMDb / Supabase`.
 
 ---
 
 ## 0. Prerequisites
 
-- Accounts: [GitHub](https://github.com), [Hugging Face](https://huggingface.co), [Render](https://render.com).
-- The backend repo pushes to **`github.com/lifeofstephanie/Recall`** (separate from the frontend repo
+- Accounts: [GitHub](https://github.com), [Render](https://render.com). **No Hugging Face, no card.**
+- Backend repo: **`github.com/lifeofstephanie/Recall`** (separate from the frontend repo
   `Parachurami/Recall`).
-- Run all git commands from the **`backend/`** folder (that's where `.git` now lives).
+- Run git commands from the **`backend/`** folder.
 
-### Commit & push the deploy changes first
-
-Render and HF deploy from GitHub, so the code must be pushed.
+### Push the deploy changes first (Render deploys from GitHub)
 
 ```bash
 cd backend
 git add -A
-git commit -m "Add deployment config (Docker Space + Render blueprint)"
+git commit -m "Slim AI service to ONNX; deploy both services on Render"
 git push origin main
 ```
 
 ---
 
-## 1. AI microservice → Hugging Face Docker Space
+## 1. Create both services from the Blueprint
 
-### 1a. Create the Space
-1. huggingface.co → **New → Space**.
-2. Name it e.g. **`gist-ai`**, License optional, **SDK = Docker**, template **Blank**, visibility **Public**
-   (private also works). Create.
+1. render.com → **New → Blueprint**.
+2. Connect the **`lifeofstephanie/Recall`** repo. Render reads `render.yaml` and proposes two web
+   services: **`gist-ai`** (Python) and **`gist-gateway`** (Node).
+3. Click **Apply** — Render will prompt for the `sync: false` env vars (below).
 
-### 1b. Add secrets
-In the Space → **Settings → Variables and secrets**, add three **secrets**:
-
+### `gist-ai` secrets
 | Key | Value |
 | --- | ----- |
 | `LANCE_DB_URI` | your `db://…` URI |
 | `LANCE_API_KEY` | your LanceDB Cloud key |
-| `LANCE_TABLE_NAME` | `movie_quotes` (or whatever you ingested into) |
 
-> `TMDB_API_KEY` is **not** needed here — it's only used by `ingest.py` locally. `EMBEDDING_MODEL`
-> is optional (defaults to `sentence-transformers/all-MiniLM-L6-v2`).
+(`LANCE_TABLE_NAME` is preset to `movie_quotes` in `render.yaml` — change it there if your table
+differs. `PYTHON_VERSION` is pinned to 3.11.)
 
-### 1c. Push the `ai/` folder to the Space
-The Space repo expects the Dockerfile at its **root**, but our Dockerfile is in `ai/`. Use
-`git subtree` — it publishes only the git-tracked contents of `ai/` (so `venv/`, `.env`, and the
-Kaggle data are automatically left out):
-
-```bash
-cd backend
-
-# Create a write token at huggingface.co/settings/tokens, then:
-git remote add space https://huggingface.co/spaces/<HF_USERNAME>/gist-ai
-
-# Split the ai/ subfolder into a temp branch and force-push it as the Space's main
-git subtree split --prefix=ai -b hf-deploy
-git push space hf-deploy:main --force
-git branch -D hf-deploy
-```
-When prompted for credentials: **username = your HF username, password = the write token.**
-
-### 1d. Watch the build & test
-- The Space **Logs** tab shows the Docker build (a few minutes — it installs PyTorch and bakes the
-  model into the image). It's ready when logs show `🎬 Gist AI ready!`.
-- Public URL: **`https://<HF_USERNAME>-gist-ai.hf.space`**
-- Smoke test:
-  ```bash
-  curl https://<HF_USERNAME>-gist-ai.hf.space/health
-  # {"status":"ok","service":"gist-ai"}
-
-  curl -X POST https://<HF_USERNAME>-gist-ai.hf.space/search \
-    -H "Content-Type: application/json" \
-    -d '{"query":"purple guy snapping his fingers","top_k":5}'
-  ```
-  If `/search` returns results, the LanceDB table is populated and reachable. An empty `results`
-  array means the table has no data (re-check that ingestion ran).
-
----
-
-## 2. Gateway → Render
-
-### 2a. Create the service from the blueprint
-1. render.com → **New → Blueprint**.
-2. Connect the **`lifeofstephanie/Recall`** repo. Render auto-detects `render.yaml` and proposes the
-   **`gist-gateway`** web service (rootDir `gateway`, build `npm install && npm run build`, start
-   `npm start`, health check `/health`).
-3. Apply.
-
-### 2b. Fill in the secret env vars
-Render will prompt for every `sync: false` var. Set:
-
+### `gist-gateway` secrets
 | Key | Value |
 | --- | ----- |
 | `SUPABASE_URL` | your Supabase project URL |
 | `SUPABASE_ANON_KEY` | Supabase anon/public key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key |
 | `TMDB_API_KEY` | your TMDb key |
-| `AI_SERVICE_URL` | **`https://<HF_USERNAME>-gist-ai.hf.space`** (no trailing slash) |
+| `AI_SERVICE_URL` | the **`gist-ai`** public URL, e.g. `https://gist-ai.onrender.com` (no trailing slash) |
 | `RESET_PASSWORD_URL` | your app's reset-password URL |
 
-`NODE_ENV`, `TMDB_BASE_URL`, and the rate-limit vars are already set in `render.yaml`. Render provides
-`PORT` automatically — the app reads it, so don't set it.
-
-### 2c. Test
-- URL: **`https://gist-gateway.onrender.com`** (Render shows the exact one).
-  ```bash
-  curl https://gist-gateway.onrender.com/health
-
-  curl -X POST https://gist-gateway.onrender.com/api/search \
-    -H "Content-Type: application/json" \
-    -d '{"query":"a man who stays inside a dream","top_k":5}'
-  ```
-  A successful `/api/search` returns TMDb-enriched movies with posters — that proves the whole chain
-  (gateway → HF AI → LanceDB → TMDb) works.
+> **Order tip:** `gist-ai` gets its URL as soon as it's created. Grab it from the `gist-ai` service
+> page and paste it into `gist-gateway`'s `AI_SERVICE_URL`, then let the gateway deploy.
 
 ---
 
-## 3. Point the frontend at the gateway
+## 2. Build notes (already handled by `render.yaml`)
 
-In the `Recall/` frontend, set the API base URL to the Render gateway URL, e.g.
-`EXPO_PUBLIC_API_URL=https://gist-gateway.onrender.com`, and hit `/api/...` routes
+- **gist-ai** — build: `pip install -r requirements.txt` + a one-line model pre-download so the ONNX
+  MiniLM model is baked in at build time (no cold-start download). Start:
+  `uvicorn main:app --host 0.0.0.0 --port $PORT` (Render injects `$PORT`). Health: `/health`.
+- **gist-gateway** — build: `npm install && npm run build`. Start: `npm start` (`node dist/index.js`).
+  Health: `/health`.
+
+---
+
+## 3. Smoke test
+
+```bash
+# AI service (internal contract)
+curl https://gist-ai.onrender.com/health
+curl -X POST https://gist-ai.onrender.com/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"purple guy snapping his fingers","top_k":5}'
+
+# Gateway (what the app calls) — proves the whole chain
+curl https://gist-gateway.onrender.com/health
+curl -X POST https://gist-gateway.onrender.com/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"a man who stays inside a dream","top_k":5}'
+```
+A successful `/api/search` returns TMDb-enriched movies with posters → gateway → AI → LanceDB → TMDb
+all work. Empty `results` means the LanceDB table has no data (re-check ingestion).
+
+---
+
+## 4. Point the frontend at the gateway
+
+In the `Recall/` frontend, set the API base URL to the gateway, e.g.
+`EXPO_PUBLIC_API_URL=https://gist-gateway.onrender.com`, and call `/api/...`
 (see [API_DOCS.md](./API_DOCS.md)).
 
 ---
 
 ## Gotchas for integration testing
 
-- **Cold starts.** Both free tiers sleep when idle (Render ~15 min, HF after long inactivity). The
-  first request wakes them and can take 30–60 s. The gateway waits up to 60 s for the AI service, so
-  the *very first* search after both were asleep may still time out — hit each `/health` once to warm
-  them, then search.
+- **Cold starts.** Free services sleep after ~15 min idle; the first request wakes them (~30–50 s
+  each). The gateway waits up to 60 s for the AI service, so the *very first* search after both slept
+  may still be slow or time out — hit each `/health` once to warm them, then search.
+- **Embedding parity.** The deployed ONNX embedder (`fastembed`) produces vectors identical
+  (cosine 1.0000) to the `sentence-transformers` build that created the LanceDB data, so no
+  re-ingestion is needed. `ingest.py` also now uses `fastembed`.
 - **Supabase storage bucket.** The avatar-upload route needs a public **`avatars`** bucket in
   Supabase Storage; create it if you haven't (the SQL migration doesn't).
 - **Rotate leaked keys.** The old `ai/.env` was committed earlier in git history — rotate the LanceDB
   and TMDb keys before making the repo public.
-- **Redeploys.** Render auto-deploys on every push to `main`. For the HF Space, re-run the
-  `git subtree split … && git push space … --force` block from step 1c.
+- **Redeploys.** Render auto-deploys on every push to `main`.

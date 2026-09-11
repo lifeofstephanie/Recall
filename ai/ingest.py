@@ -11,7 +11,7 @@ import httpx
 import lancedb
 import pyarrow as pa
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 
 try:
     import kaggle
@@ -115,8 +115,8 @@ def chunk_dialogue(lines, chunk_size=3):
 def ingest():
     print("\n🎬 STARTING BULK INGESTION PIPELINE (Kaggle -> LanceDB Cloud)\n")
 
-    model = SentenceTransformer(EMBEDDING_MODEL)
-    print("✅ MiniLM Model loaded successfully")
+    model = TextEmbedding(model_name=EMBEDDING_MODEL)
+    print("✅ MiniLM (ONNX) Model loaded successfully")
 
     table = setup_database()
     download_path = download_dataset()
@@ -179,7 +179,7 @@ def ingest():
 
             print(f"   ⚡ Embedding {len(chunks)} dialogue chunks for: {official_title}")
             try:
-                embeddings = model.encode(chunks)
+                embeddings = list(model.embed(chunks))
             except Exception as e:
                 print(f"   ❌ Embedding failed: {e}")
                 continue

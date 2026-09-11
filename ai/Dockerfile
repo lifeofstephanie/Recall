@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -6,18 +6,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Bake the MiniLM model into the image so cold starts are fast and the
-# container never needs to download it at runtime. HF_HOME points at a
-# world-readable cache directory that works whether the Space runs the
-# container as root or as the default uid-1000 user.
-ENV HF_HOME=/app/hf_cache
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')" \
-    && chmod -R a+rX /app/hf_cache
+# Pre-download the ONNX MiniLM model so cold starts don't wait on a download.
+# fastembed + ONNX Runtime is lightweight (no PyTorch) and runs well under 512MB.
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='sentence-transformers/all-MiniLM-L6-v2')"
 
 # Copy source code (see .dockerignore — venv, .env, data are excluded)
 COPY . .
 
-# Hugging Face Spaces routes public HTTPS traffic to this port
-EXPOSE 7860
+# Render (and most PaaS) inject the port via $PORT; default to 8000 locally.
+ENV PORT=8000
+EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

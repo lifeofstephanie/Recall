@@ -9,5 +9,5 @@ httpx==0.27.0
 lancedb
 pyarrow
 
-# ── Embedding Model ──────────────────────────────
-sentence-transformers
+# ── Embedding Model (lightweight ONNX inference — no PyTorch) ──
+fastembed
