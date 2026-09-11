@@ -191,12 +191,13 @@ export async function updateProfile(
 
     const { name, password } = req.body;
 
-    // Update password in Supabase Auth if provided
+    // Update password via the admin API (service role). auth.updateUser()
+    // needs a full client session, which the gateway doesn't hold — so we
+    // update by user id instead. Avoids "Auth session missing".
     if (password) {
-      const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
-        global: { headers: { Authorization: `Bearer ${req.token}` } },
+      const { error } = await supabase.auth.admin.updateUserById(req.user.id, {
+        password,
       });
-      const { error } = await supabaseClient.auth.updateUser({ password });
       if (error) return res.status(400).json({ error: error.message });
 
       // Account notification (best-effort).
